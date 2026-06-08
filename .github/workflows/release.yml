@@ -116,4 +116,4 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Publish cargo-jconduit
-        run: cargo publish -p cargo-jconduit --locked --token ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo login ${{ secrets.CRATES_IO_TOKEN }} && cargo publish -p cargo-jconduit --locked
