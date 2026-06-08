@@ -14,30 +14,131 @@ concurrency:
 
 
 jobs:
+  validate:
+    name: Validate Tag & Cargo Versions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check Tag Matches Cargo.toml
+        shell: bash
+        run: |
+          set -e
+
+          TAG="${GITHUB_REF_NAME}"
+          METADATA=$(cargo metadata --no-deps --format-version 1)
+
+          VERSION_JCONDUIT=$(echo "$METADATA" | jq -r '.packages[] | select(.name=="jconduit") | .version')
+          VERSION_CARGO=$(echo "$METADATA" | jq -r '.packages[] | select(.name=="cargo-jconduit") | .version')
+
+          echo "Tag: $TAG"
+          echo "jconduit: v$VERSION_JCONDUIT"
+          echo "cargo-jconduit: v$VERSION_CARGO"
+
+          if [ "$TAG" != "v$VERSION_JCONDUIT" ]; then
+            echo "Version mismatch for jconduit"
+            exit 1
+          fi
+
+          if [ "$TAG" != "v$VERSION_CARGO" ]; then
+            echo "Version mismatch for cargo-jconduit"
+            exit 1
+          fi
+
+          echo "All versions match ✔"
+  
+
+  publish_crates:
+    name: Publish to crates.io
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish jconduit
+        shell: bash
+        run: |
+          set -e
+          cargo publish -p jconduit --locked --token ${{ secrets.CRATES_IO_TOKEN }} || \
+          echo "jconduit already published or skipped"
+
+      - name: Publish cargo-jconduit
+        shell: bash
+        run: |
+          set -e
+          cargo publish -p cargo-jconduit --locked --token ${{ secrets.CRATES_IO_TOKEN }} || \
+          echo "cargo-jconduit already published or skipped"
+  
+
   build:
     name: Build (${{ matrix.crate }} - ${{ matrix.target }})
+    needs: validate
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
         include:
+
+          # ---------------- jconduit ----------------
           - crate: jconduit
+            bin: jconduit
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            suffix: linux-x86_64
 
           - crate: jconduit
+            bin: jconduit
             os: windows-latest
             target: x86_64-pc-windows-msvc
+            suffix: windows-x86_64
 
           - crate: jconduit
-            os: macos-latest
+            bin: jconduit
+            os: macos-14
             target: aarch64-apple-darwin
+            suffix: macos-arm64
 
+          - crate: jconduit
+            bin: jconduit
+            os: macos-13
+            target: x86_64-apple-darwin
+            suffix: macos-x86_64
+
+          # -------------- cargo-jconduit --------------
           - crate: cargo-jconduit
+            bin: cargo-jconduit
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            suffix: linux-x86_64
 
+          - crate: cargo-jconduit
+            bin: cargo-jconduit
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: windows-x86_64
+
+          - crate: cargo-jconduit
+            bin: cargo-jconduit
+            os: macos-14
+            target: aarch64-apple-darwin
+            suffix: macos-arm64
+
+          - crate: cargo-jconduit
+            bin: cargo-jconduit
+            os: macos-13
+            target: x86_64-apple-darwin
+            suffix: macos-x86_64
 
     steps:
       - name: Checkout
@@ -48,22 +149,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Cache Rust
+      - name: Cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Verify tag matches Cargo.toml version
-        shell: bash
-        run: |
-          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
-          TAG="${GITHUB_REF_NAME}"
-
-          echo "Tag: $TAG"
-          echo "Cargo version: $VERSION"
-
-          if [ "v$VERSION" != "$TAG" ]; then
-            echo "Version mismatch between tag and Cargo.toml"
-            exit 1
-          fi
 
       - name: Test
         run: cargo test -p ${{ matrix.crate }} --locked
@@ -71,81 +158,60 @@ jobs:
       - name: Build
         run: cargo build -p ${{ matrix.crate }} --release --locked --target ${{ matrix.target }}
 
-      - name: Package (Linux/macOS)
-        if: matrix.crate == 'jconduit' && matrix.os != 'windows-latest'
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
-          tar -czf jconduit-${{ matrix.target }}.tar.gz \
-            -C target/${{ matrix.target }}/release \
-            jconduit \
-            -C ../../../ \
-            README.md LICENSE*
+          set -e
+          STAGING="${{ matrix.crate }}-${{ matrix.suffix }}"
+          mkdir -p "$STAGING"
+
+          cp target/${{ matrix.target }}/release/${{ matrix.bin }} "$STAGING/"
+          cp README.md LICENSE* "$STAGING/" 2>/dev/null || true
+
+          tar -czf "${STAGING}.tar.gz" "$STAGING"
 
       - name: Package (Windows)
-        if: matrix.crate == 'jconduit' && matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: powershell
         run: |
-          Compress-Archive `
-            -Path target/${{ matrix.target }}/release/jconduit.exe, README.md, LICENSE* `
-            -DestinationPath jconduit-${{ matrix.target }}.zip
+          $STAGING = "${{ matrix.crate }}-${{ matrix.suffix }}"
+          New-Item -ItemType Directory -Force -Path $STAGING | Out-Null
 
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}.exe" -Destination $STAGING
+          Copy-Item "README.md" -Destination $STAGING -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE*" -Destination $STAGING -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path "$STAGING/*" -DestinationPath "${STAGING}.zip"
+
+      # ---------------- UPLOAD ----------------
       - name: Upload artifacts
-        if: matrix.crate == 'jconduit'
         uses: actions/upload-artifact@v4
         with:
-          name: jconduit-${{ matrix.target }}
+          name: ${{ matrix.crate }}-${{ matrix.target }}
           path: |
-            jconduit-*.tar.gz
-            jconduit-*.zip
+            ${{ matrix.crate }}-${{ matrix.suffix }}.tar.gz
+            ${{ matrix.crate }}-${{ matrix.suffix }}.zip
+          if-no-files-found: error
 
 
   release:
     name: GitHub Release
-    runs-on: ubuntu-latest
     needs: build
+    runs-on: ubuntu-latest
 
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
+          merge-multiple: true
 
-      - name: Create GitHub Release (ONLY ONCE)
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
           tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
           files: dist/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
-  publish_crates_io:
-    name: Publish cargo-jconduit
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Check if version already exists on crates.io
-        run: |
-          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
-          CRATE="cargo-jconduit"
-
-          if curl -s "https://crates.io/api/v1/crates/$CRATE/$VERSION" | grep -q '"version"'; then
-            echo "✔ Already published on crates.io, skipping"
-            exit 0
-          fi
-
-      - name: Verify package
-        run: cargo package -p cargo-jconduit
-
-      - name: Publish to crates.io
-        run: cargo publish -p cargo-jconduit --locked --token ${{ secrets.CRATES_IO_TOKEN }}
