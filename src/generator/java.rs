@@ -97,6 +97,7 @@ pub struct RustField {
     pub ty: RustType,
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct RustStruct {
     pub name: String,
