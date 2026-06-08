@@ -1,121 +1,78 @@
-name: Continuous Deployment
+name: Continuous Integration
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build (${{ matrix.name }} - ${{ matrix.os }})
+  test:
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # jconduit-standalone
-          - name: jconduit
-            crate: jconduit
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: jconduit-linux-x86_64.tar.gz
-
-          - name: jconduit
-            crate: jconduit
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: jconduit-windows-x86_64.zip
-
-          - name: jconduit
-            crate: jconduit
-            os: macos-13
-            target: x86_64-apple-darwin
-            artifact: jconduit-macos-x86_64.tar.gz
-
-          - name: jconduit
-            crate: jconduit
-            os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: jconduit-macos-arm64.tar.gz
-
-          # cargo-jconduit
-          - name: cargo-jconduit
-            crate: cargo-jconduit
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: cargo-jconduit-linux-x86_64.tar.gz
-
-          - name: cargo-jconduit
-            crate: cargo-jconduit
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: cargo-jconduit-windows-x86_64.zip
-
-          - name: cargo-jconduit
-            crate: cargo-jconduit
-            os: macos-13
-            target: x86_64-apple-darwin
-            artifact: cargo-jconduit-macos-x86_64.tar.gz
-
-          - name: cargo-jconduit
-            crate: cargo-jconduit
-            os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: cargo-jconduit-macos-arm64.tar.gz
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests (workspace)
+        run: cargo test --workspace --locked
+
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (fmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
-        run: cargo test -p ${{ matrix.crate }} --locked
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: Build
-        run: cargo build -p ${{ matrix.crate }} --release --locked --target ${{ matrix.target }}
+      - name: Run clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Package (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        run: |
-          tar -czf ${{ matrix.artifact }} \
-            -C target/${{ matrix.target }}/release \
-            ${{ matrix.crate }} \
-            -C ../../../ \
-            README.md LICENSE*
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
 
-      - name: Package (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
-        run: |
-          Compress-Archive `
-            -Path target/${{ matrix.target }}/release/${{ matrix.crate }}.exe, README.md, LICENSE* `
-            -DestinationPath ${{ matrix.artifact }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - name: Generate SHA256 (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        run: sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Generate SHA256 (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
-        run: |
-          $hash = (Get-FileHash ${{ matrix.artifact }} -Algorithm SHA256).Hash
-          "$hash  ${{ matrix.artifact }}" | Out-File "${{ matrix.artifact }}.sha256"
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+      - name: Run cargo audit
+        uses: rustsec/audit-action@v1
         with:
-          generate_release_notes: true
-          files: |
-            ${{ matrix.artifact }}
-            ${{ matrix.artifact }}.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
