@@ -1,39 +1,9 @@
-[package]
-name = "cargo-jconduit"
-version = "0.1.0"
-edition = "2024"
-description = "A code generator that generates a buffer based bridge between Java FFM (Foreign Function & Memory API) and Rust based on user defined c headers."
-homepage = "https://github.com/Matrix848/Jconduit"
-repository = "https://github.com/Matrix848/Jconduit"
-keywords = ["java", "ffm", "ffi", "generator", "jni"]
-categories = ["development-tools::ffi", "development-tools"]
-license = "MIT OR Apache-2.0"
-readme = "README.md"
-
-[lib]
-name = "cargo_jconduit"
-path = "src/lib.rs"
-
-[[bin]]
-name = "jconduit"
-path = "src/bin/jconduit_standalone.rs"
-
-[[bin]]
-name = "cargo-jconduit"
-path = "src/bin/cargo_jconduit.rs"
-
-[dependencies]
-clap = { version = "4.6", features = ["derive"] }
-serde = { version = "1.0", features = ["derive"] }
-quote = "1.0"
-syn = { version = "2.0", features = ["full", "extra-traits"] }
-anyhow = "1.0.102"
-bindgen = "0.72.1"
-toml = "1.1"
-prettyplease = "0.2.37"
-dunce = "1.0.5"
-cbindgen = "0.29.3"
-askama = "0.16.0"
+[workspace]
+members = [
+    "crates/cargo-jconduit",
+    "crates/jconduit"
+]
+resolver = "3"
 
 [profile.release]
 opt-level = 3

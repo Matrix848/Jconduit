@@ -1,5 +1,5 @@
 use anyhow::Result;
-use cargo_jconduit::{Cli, run_cli};
+use cargo_jconduit::{run_cli, Cli};
 use clap::Parser;
 use std::env;
 

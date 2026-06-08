@@ -1,5 +1,5 @@
 use crate::generator::ForeignFunctions;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use askama::Template;
 use quote::__private::TokenStream;
 use quote::{format_ident, quote};
@@ -224,9 +224,9 @@ pub(super) fn crate_gen(name: &str, version: &str, crate_path: &Path) -> Result<
         pub mod dispatch;
     };
 
-    let src_dir = crate_path.join("src");
+    let src_dir = crate_path.join("..");
     fs::create_dir_all(&src_dir)?;
-    let cargo_toml_path = crate_path.join("Cargo.toml");
+    let cargo_toml_path = crate_path.join("../../Cargo.toml");
 
     let lib_name = name.replace('-', "_");
 
@@ -240,7 +240,7 @@ pub(super) fn crate_gen(name: &str, version: &str, crate_path: &Path) -> Result<
 
     let syntax_tree: syn::File = syn::parse2(root_tokens)?;
     let pretty_code = prettyplease::unparse(&syntax_tree);
-    fs::write(crate_path.join("src/lib.rs"), pretty_code)?;
+    fs::write(crate_path.join("../lib.rs"), pretty_code)?;
 
     Ok(src_dir)
 }

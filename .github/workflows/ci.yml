@@ -1,39 +1,121 @@
-name: Continuous Integration
+name: Continuous Deployment
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    tags:
+      - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test_and_lint:
-    name: Test and Lint
-    runs-on: ubuntu-latest
+  build:
+    name: Build (${{ matrix.name }} - ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # jconduit-standalone
+          - name: jconduit
+            crate: jconduit
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: jconduit-linux-x86_64.tar.gz
+
+          - name: jconduit
+            crate: jconduit
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: jconduit-windows-x86_64.zip
+
+          - name: jconduit
+            crate: jconduit
+            os: macos-13
+            target: x86_64-apple-darwin
+            artifact: jconduit-macos-x86_64.tar.gz
+
+          - name: jconduit
+            crate: jconduit
+            os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: jconduit-macos-arm64.tar.gz
+
+          # cargo-jconduit
+          - name: cargo-jconduit
+            crate: cargo-jconduit
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: cargo-jconduit-linux-x86_64.tar.gz
+
+          - name: cargo-jconduit
+            crate: cargo-jconduit
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: cargo-jconduit-windows-x86_64.zip
+
+          - name: cargo-jconduit
+            crate: cargo-jconduit
+            os: macos-13
+            target: x86_64-apple-darwin
+            artifact: cargo-jconduit-macos-x86_64.tar.gz
+
+          - name: cargo-jconduit
+            crate: cargo-jconduit
+            os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: cargo-jconduit-macos-arm64.tar.gz
 
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          targets: ${{ matrix.target }}
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Verify Code Formatting
-        run: cargo fmt --check
+      - name: Run tests
+        run: cargo test -p ${{ matrix.crate }} --locked
 
-      - name: Execute Cargo Tests
-        run: cargo check --locked --all-features
+      - name: Build
+        run: cargo build -p ${{ matrix.crate }} --release --locked --target ${{ matrix.target }}
 
-      - name: Run Clippy Linter
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Package (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          tar -czf ${{ matrix.artifact }} \
+            -C target/${{ matrix.target }}/release \
+            ${{ matrix.crate }} \
+            -C ../../../ \
+            README.md LICENSE*
 
-      - name: Execute Cargo Tests
-        run: cargo test --all-features --locked
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          Compress-Archive `
+            -Path target/${{ matrix.target }}/release/${{ matrix.crate }}.exe, README.md, LICENSE* `
+            -DestinationPath ${{ matrix.artifact }}
+
+      - name: Generate SHA256 (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+
+      - name: Generate SHA256 (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          $hash = (Get-FileHash ${{ matrix.artifact }} -Algorithm SHA256).Hash
+          "$hash  ${{ matrix.artifact }}" | Out-File "${{ matrix.artifact }}.sha256"
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
