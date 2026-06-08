@@ -391,10 +391,10 @@ pub fn generate_direct_fn(
         ReturnType::Type(_, ty) => {
             let mut rt = RustType::try_from(&**ty)
                 .map_err(|_| anyhow::anyhow!("unsupported return type in {fn_name}"))?;
-            if let RustType::Struct(name) = &rt {
-                if let Some(e) = enums.get(name) {
-                    rt = RustType::Primitive(e.repr);
-                }
+            if let RustType::Struct(name) = &rt
+                && let Some(e) = enums.get(name)
+            {
+                rt = RustType::Primitive(e.repr);
             }
             Some(rt)
         }
