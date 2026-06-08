@@ -1,0 +1,8 @@
+[package]
+name = "{{ crate_name }}"
+version = "{{ version }}"
+edition = "2024"
+
+[lib]
+name = "{{ lib_name }}"
+crate-type = ["cdylib"]

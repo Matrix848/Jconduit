@@ -1,0 +1,215 @@
+import {{ package }}.*;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+
+public final class {{ proxy_class_name }} {
+
+    private static final ValueLayout.OfInt C_UINT32 = ValueLayout.JAVA_INT.withByteAlignment(4);
+
+    //-----------------------------------------------------------------
+    // Buffer limits
+    //-----------------------------------------------------------------
+
+    /// The minimum size the buffer can be resized to(default: 64KB).
+    private final static long MIN_BUFFER_SIZE = {{ proxy_settings.min_buffer_size }};
+    /// The maximum size the buffer can be resized to(default: 8MB).
+    private final static long MAX_BUFFER_SIZE = {{ proxy_settings.max_buffer_size }};
+    {% if has_scratchpad_overloads %}
+    /// The size of the scratchpad, it must be set to the biggest struct it has to hold.
+    private final static long SCRATCHPAD_CAPACITY = Math.max({{ scratchpad_layouts_byte_sizes }});
+    {% endif %}
+
+    //-----------------------------------------------------------------
+    // Resizing
+    //-----------------------------------------------------------------
+
+    /// After how many manual flushes the buffer should be shrink if the usage remained under the usage threshold.
+    private final static int DECAYING_FRAMES_THRESHOLD = {{ proxy_settings.decaying_frames_threshold }};
+    /// Under what usage percentage the buffer should remain for the specified time for it to be shrunk.
+    private final static float DECAYING_USAGE_THRESHOLD = {{ proxy_settings.decaying_usage_threshold }};
+    /// The rate at which the buffer should shrink if it's usage stayed under the specified usage for the specified time.
+    private final static float SHRINK_RATE = {{ proxy_settings.shrink_rate }};
+    /// The amount of times the maximum bytes needed the buffer should grow when an automatic flush is triggered.
+    private final static float GROWTH_RATE = {{ proxy_settings.growth_rate }};
+
+
+    //-----------------------------------------------------------------
+    // Headers
+    //-----------------------------------------------------------------
+
+    /// Command header byte size.
+    private final static int CMD_HEADER_BYTES = 4;
+    /// Command header byte size.
+    private final static int BUFFER_HEADER_BYTES = 4;
+
+
+    private static final class ThreadProxyState{
+        Arena bufferArena;
+        MemorySegment buffer;
+        {% if has_scratchpad_overloads %}
+        Arena scratchPadArena;
+        MemorySegment scratchPad;
+        {% endif %}
+        long cursor = BUFFER_HEADER_BYTES;
+        long capacity;
+
+        int cmdCount = 0;
+
+        int decayingFrameCount = 0;
+        long decayingUsageThresholdBytes;
+
+
+        ThreadProxyState(long initialSize){
+            {% if proxy_settings.auto_arena %}
+            this.bufferArena = Arena.ofAuto();
+            {% if has_scratchpad_overloads %}this.scratchPadArena = Arena.ofAuto();{% endif %}
+            {% else %}
+            this.bufferArena = Arena.ofConfined();
+            {% if has_scratchpad_overloads %}this.scratchPadArena = Arena.ofConfined();{% endif %}
+            {% endif %}
+            this.capacity = Math.clamp(initialSize, MIN_BUFFER_SIZE, MAX_BUFFER_SIZE);
+
+            this.buffer = bufferArena.allocate(this.capacity, 16);
+            {% if has_scratchpad_overloads %}this.scratchPad = scratchPadArena.allocate(SCRATCHPAD_CAPACITY, 16);{% endif %}
+
+            this.decayingUsageThresholdBytes = (long) (DECAYING_USAGE_THRESHOLD * this.capacity);
+        }
+
+        /**
+         * Resizes the buffer based to the required dimension. This erases all the content of the buffer,
+         * for this reason the buffer should be flushed before the this method is called.
+         */
+        void resize(long newSize) {
+            this.capacity = Math.clamp(newSize, MIN_BUFFER_SIZE, MAX_BUFFER_SIZE);
+            {% if proxy_settings.auto_arena %}
+            this.bufferArena = Arena.ofAuto();
+            {% else %}
+            this.bufferArena.close();
+            this.bufferArena = Arena.ofConfined();
+            {% endif %}
+            this.buffer = this.bufferArena.allocate(this.capacity, 16);
+            this.cursor = BUFFER_HEADER_BYTES;
+            this.decayingUsageThresholdBytes = (long)(this.capacity * DECAYING_USAGE_THRESHOLD);
+        }
+
+        void reset() {
+            this.cursor = BUFFER_HEADER_BYTES;
+            this.cmdCount = 0;
+        }
+        {% if !proxy_settings.auto_arena %}
+        void close() {
+            this.bufferArena.close();
+            this.scratchPadArena.close();
+        }
+        {% endif %}
+    }
+
+    private static final ThreadLocal<ThreadProxyState> THREAD_STATE = ThreadLocal.withInitial(() -> new ThreadProxyState(MIN_BUFFER_SIZE));
+
+    /**
+     * This is what it's be expected to be called by outside classes, it
+     * will decrease the decayingFrameCount if the requirements are met.
+     */
+    public void flush() {
+        ThreadProxyState threadState = THREAD_STATE.get();
+
+        if (threadState.decayingUsageThresholdBytes >= threadState.cursor) {
+            threadState.decayingFrameCount ++;
+        } else {
+            threadState.decayingFrameCount = 0;
+        }
+
+        this.noDecayFlush(threadState);
+
+        long buffer_size = threadState.capacity;
+
+        if (buffer_size > MIN_BUFFER_SIZE &&  threadState.decayingFrameCount > DECAYING_FRAMES_THRESHOLD ) {
+            threadState.resize((long)(SHRINK_RATE * buffer_size));
+            threadState.decayingFrameCount = 0;
+        }
+    }
+
+    /**
+     * Will flush the buffer without decreasing the decayingFrameCount, this is needed for automatic flushes.
+     */
+    private void noDecayFlush(ThreadProxyState threadState) {
+        if (threadState.cursor <= BUFFER_HEADER_BYTES) {
+            return;
+        }
+
+        threadState.buffer.set(C_UINT32, 0, threadState.cmdCount);
+
+        MemorySegment commandsSlice = threadState.buffer.asSlice(0, threadState.cursor);
+
+        {{ jextract_class_name }}.flush_buffer(commandsSlice);
+        threadState.reset();
+    }
+
+    /**
+     * Reserves space inside the command buffer, resizing it if necessary,
+     * and automatically flushing if the current batch fills the space.
+     */
+    private long reserveCommandSpace(ThreadProxyState threadState, long payloadSize, int commandId) {
+        long padding = (-(threadState.cursor + CMD_HEADER_BYTES)) & 15L;
+        long totalSize = CMD_HEADER_BYTES + padding + payloadSize;
+
+        if (threadState.cursor + totalSize > threadState.capacity) {
+            long newBufferSize = Math.clamp((long)((threadState.cursor + totalSize) * GROWTH_RATE), MIN_BUFFER_SIZE, MAX_BUFFER_SIZE);
+
+            threadState.decayingFrameCount = 0;
+
+            this.noDecayFlush(threadState);
+
+            padding = (-(BUFFER_HEADER_BYTES + CMD_HEADER_BYTES)) & 15L;
+
+            long commandMinNeededSize = BUFFER_HEADER_BYTES + CMD_HEADER_BYTES + payloadSize;
+            if (commandMinNeededSize > MAX_BUFFER_SIZE) {
+                throw new IllegalStateException("Command (id = " + commandId + ") allocation size (" + commandMinNeededSize + " bytes) exceeds MAX_BUFFER_SIZE limit (" + MAX_BUFFER_SIZE + ").");
+            }
+
+            threadState.resize(newBufferSize);
+        }
+
+        threadState.cursor += padding;
+        threadState.buffer.set(C_UINT32, threadState.cursor, commandId);
+        threadState.cursor += CMD_HEADER_BYTES;
+
+        long payloadStart = threadState.cursor;
+
+        threadState.cursor += payloadSize;
+        threadState.cmdCount += 1;
+
+        return payloadStart;
+    }
+    {% if has_scratchpad_overloads %}
+    private MemorySegment reserveScratchpad(MemoryLayout layout) {
+        assert layout.byteSize() <= SCRATCHPAD_CAPACITY;
+        return THREAD_STATE.get().scratchPad.asSlice(0, layout.byteSize());
+    }
+    {% endif %}
+
+    {% for func in deferred_fns %}
+    {{ func.signature }} {
+        ThreadProxyState threadState = THREAD_STATE.get();
+    {{ func.body }}
+    }
+    {% endfor %}
+
+    {% for func in direct_fns %}
+    {{ func.signature }} {
+    {{ func.body }}
+    }
+    {% endfor %}
+
+    {% for func in direct_scratchpad_fns %}
+    {{ func.signature }} {
+    {{ func.body }}
+    }
+    {% endfor %}
+    {% if !proxy_settings.auto_arena %}
+    public void shutdown() {
+        THREAD_STATE.get().close();
+    }
+    {% endif %}
+}

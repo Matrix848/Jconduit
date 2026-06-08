@@ -1,0 +1,6 @@
+[generator]
+crate_name = "engine-dispatcher"
+proxy_class_name = "EngineConduit"
+package = "foo.bar"
+functions_header = "./include/functions.h"
+typedef_header = "./include/typedef.h"
