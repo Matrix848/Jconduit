@@ -1,6 +1,6 @@
+use crate::GeneratorContext;
 use crate::generator::ForeignFunctions;
 use crate::utils::jconduit_callbacks::PrefixStripper;
-use crate::GeneratorContext;
 use std::path::Path;
 
 fn bindgen_ffi_module(ctx: &GeneratorContext, output_file: &Path) -> anyhow::Result<()> {

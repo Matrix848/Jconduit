@@ -1,9 +1,9 @@
+use crate::GeneratorContext;
 use crate::generator::dispatcher_gen::{crate_gen, generate_dispatcher};
 use crate::generator::ffi_gen::generate_ffi;
 use crate::generator::java::{
-    gen_proxy_bindings, generate_proxy_template, jextract_bindings, RustEnum, RustStruct,
+    RustEnum, RustStruct, gen_proxy_bindings, generate_proxy_template, jextract_bindings,
 };
-use crate::GeneratorContext;
 use anyhow::Result;
 use askama::Template;
 use std::fs;

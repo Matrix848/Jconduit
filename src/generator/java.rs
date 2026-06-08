@@ -1,7 +1,7 @@
-use crate::generator::ForeignFunctions;
-use crate::utils::formatting::{capitalize, to_camel_case, IndentWriter};
 use crate::ProxySettings;
-use anyhow::{bail, Context, Result};
+use crate::generator::ForeignFunctions;
+use crate::utils::formatting::{IndentWriter, capitalize, to_camel_case};
+use anyhow::{Context, Result, bail};
 use askama::Template;
 use cbindgen::ParseConfig;
 use std::collections::HashMap;
