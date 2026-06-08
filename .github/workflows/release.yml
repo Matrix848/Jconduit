@@ -109,12 +109,6 @@ jobs:
             target: aarch64-apple-darwin
             suffix: macos-arm64
 
-          - crate: jconduit
-            bin: jconduit
-            os: macos-13
-            target: x86_64-apple-darwin
-            suffix: macos-x86_64
-
           # -------------- cargo-jconduit --------------
           - crate: cargo-jconduit
             bin: cargo-jconduit
@@ -133,12 +127,6 @@ jobs:
             os: macos-14
             target: aarch64-apple-darwin
             suffix: macos-arm64
-
-          - crate: cargo-jconduit
-            bin: cargo-jconduit
-            os: macos-13
-            target: x86_64-apple-darwin
-            suffix: macos-x86_64
 
     steps:
       - name: Checkout
