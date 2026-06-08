@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+
 jobs:
   build:
     name: Build (${{ matrix.crate }} - ${{ matrix.target }})
@@ -26,6 +31,11 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: jconduit-windows-x86_64.zip
+
+          - crate: jconduit
+            os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: jconduit-macos-x86_64.tar.gz
 
           - crate: jconduit
             os: macos-latest
@@ -84,8 +94,7 @@ jobs:
           "$hash  ${{ matrix.artifact }}" | Out-File "${{ matrix.artifact }}.sha256"
 
       - name: Upload Release Assets
-        if:
-          matrix.crate == 'jconduit' && github.run_attempt == 1
+        if: matrix.crate == 'jconduit'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -111,5 +120,8 @@ jobs:
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Verify package
+        run: cargo package -p cargo-jconduit
+
       - name: Publish cargo-jconduit
-        run: cargo login ${{ secrets.CRATES_IO_TOKEN }} && cargo publish -p cargo-jconduit --locked
+        run: cargo publish -p cargo-jconduit --locked --token ${{ secrets.CRATES_IO_TOKEN }}
