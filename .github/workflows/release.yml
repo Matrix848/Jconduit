@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: write
-  
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
@@ -52,6 +52,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Verify tag matches Cargo.toml version
+        shell: bash
         run: |
           VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           TAG="${GITHUB_REF_NAME}"
@@ -60,7 +61,7 @@ jobs:
           echo "Cargo version: $VERSION"
 
           if [ "v$VERSION" != "$TAG" ]; then
-            echo "❌ Version mismatch between tag and Cargo.toml"
+            echo "Version mismatch between tag and Cargo.toml"
             exit 1
           fi
 
