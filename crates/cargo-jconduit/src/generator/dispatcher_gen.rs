@@ -1,10 +1,10 @@
 use crate::generator::ForeignFunctions;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use askama::Template;
 use quote::__private::TokenStream;
 use quote::{format_ident, quote};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 fn snake_to_camel(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -218,15 +218,13 @@ struct CargoTomTemplate {
     lib_name: String,
     version: String,
 }
-pub(super) fn crate_gen(name: &str, version: &str, crate_path: &Path) -> Result<PathBuf> {
+pub(super) fn crate_gen(name: &str, version: &str, crate_path: &Path) -> Result<()> {
     let root_tokens = quote! {
         pub mod ffi;
         pub mod dispatch;
     };
 
-    let src_dir = crate_path.join("..");
-    fs::create_dir_all(&src_dir)?;
-    let cargo_toml_path = crate_path.join("../../Cargo.toml");
+    let cargo_toml_path = crate_path.join("Cargo.toml");
 
     let lib_name = name.replace('-', "_");
 
@@ -240,9 +238,10 @@ pub(super) fn crate_gen(name: &str, version: &str, crate_path: &Path) -> Result<
 
     let syntax_tree: syn::File = syn::parse2(root_tokens)?;
     let pretty_code = prettyplease::unparse(&syntax_tree);
-    fs::write(crate_path.join("../lib.rs"), pretty_code)?;
+    fs::create_dir_all(crate_path.join("src"))?;
+    fs::write(crate_path.join("src/lib.rs"), pretty_code)?;
 
-    Ok(src_dir)
+    Ok(())
 }
 pub fn generate_dispatcher(
     dispatcher_file: &Path,

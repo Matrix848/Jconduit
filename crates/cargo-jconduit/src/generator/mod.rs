@@ -1,9 +1,9 @@
-use crate::GeneratorContext;
 use crate::generator::dispatcher_gen::{crate_gen, generate_dispatcher};
 use crate::generator::ffi_gen::generate_ffi;
 use crate::generator::java::{
-    RustEnum, RustStruct, gen_proxy_bindings, generate_proxy_template, jextract_bindings,
+    gen_proxy_bindings, generate_proxy_template, jextract_bindings, RustEnum, RustStruct,
 };
+use crate::GeneratorContext;
 use anyhow::Result;
 use askama::Template;
 use std::fs;
@@ -27,10 +27,10 @@ pub(super) fn generate_conduit(ctx: &GeneratorContext) -> Result<()> {
     // Generate the Rust library
     let crate_dir = &root_dir.join("rust");
     fs::create_dir_all(crate_dir)?;
-    let src_dir = &crate_gen(&ctx.crate_name, &ctx.version, crate_dir)?;
-    let ffi_file = &src_dir.join("ffi.rs");
+    crate_gen(&ctx.crate_name, &ctx.version, crate_dir)?;
+    let ffi_file = &crate_dir.join("src/ffi.rs");
     let ff = generate_ffi(ctx, ffi_file)?;
-    let dispatcher_file = &src_dir.join("dispatch.rs");
+    let dispatcher_file = &crate_dir.join("src/dispatch.rs");
     generate_dispatcher(dispatcher_file, &ff)?;
     // Generate the Java library
     let java_dir = &root_dir.join("java");
