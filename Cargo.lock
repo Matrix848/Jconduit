@@ -157,7 +157,7 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "cargo-jconduit"
-version = "0.1.0-alpha"
+version = "0.1.1-alpha"
 dependencies = [
  "anyhow",
  "askama",
@@ -384,7 +384,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jconduit"
-version = "0.1.0-alpha"
+version = "0.1.1-alpha"
 dependencies = [
  "anyhow",
  "cargo-jconduit",

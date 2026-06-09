@@ -1,6 +1,6 @@
 [package]
 name = "cargo-jconduit"
-version = "0.1.0-alpha"
+version = "0.1.1-alpha"
 edition = "2024"
 description = "Cargo tool that generates a Rust-Java FFI bridge using user-defined C headers"
 homepage = "https://github.com/Matrix848/Jconduit"
