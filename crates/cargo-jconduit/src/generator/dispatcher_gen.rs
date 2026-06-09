@@ -1,5 +1,5 @@
 use crate::generator::ForeignFunctions;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use askama::Template;
 use quote::__private::TokenStream;
 use quote::{format_ident, quote};
