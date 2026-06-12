@@ -1,5 +1,5 @@
 #pragma once
-#include "typedef.h"
+#include "typedef.hpp"
 
 // void functions
 void body_destroy(uint32_t space_id, uint64_t body_id);
@@ -10,7 +10,7 @@ void engine_shutdown(void);
 
 // typed functions (return values)
 const Vector3f* body_get_position(uint32_t space_id, uint64_t body_id);
-void body_get_rotation(uint32_t space_id, uint64_t body_id, Quaternion const *rot_out);
+void body_get_rotation(uint32_t space_id,  uint64_t body_id, Quaternion const *rot_out);
 void query_closest_contact(uint32_t space_id, uint64_t body_a, uint64_t body_b, Contact *const rot_out);
 void body_get_normal(uint32_t space_id, uint64_t body_id, Vector3f *const output); // Won't generate scratch override
 void body_get_type(uint32_t space_id, uint64_t body_id, BodyType *const type_out);

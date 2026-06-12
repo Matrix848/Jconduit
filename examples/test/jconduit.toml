@@ -2,5 +2,5 @@
 crate_name = "engine-dispatcher"
 proxy_class_name = "EngineConduit"
 package = "foo.bar"
-functions_header = "./include/functions.h"
-typedef_header = "./include/typedef.h"
+functions_header = "./include/functions.hpp"
+typedef_header = "./include/typedef.hpp"

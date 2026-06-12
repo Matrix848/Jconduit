@@ -18,6 +18,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "cargo-jconduit"
 path = "src/bin/cargo_jconduit.rs"
+required-features = ["cargo-build"]
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
@@ -31,3 +32,14 @@ prettyplease = "0.2.37"
 dunce = "1.0.5"
 cbindgen = "0.29.3"
 askama = "0.16.0"
+thiserror = "2.0.18"
+log = "0.4.32"
+tree-sitter = "0.26.9"
+tree-sitter-cpp = "0.23.4"
+env_logger = { version = "0.11.10", optional = true }
+regex = "1.12.4"
+
+
+[features]
+default = []
+cargo-build = ["dep:env_logger"]

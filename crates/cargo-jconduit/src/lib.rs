@@ -4,10 +4,16 @@ pub(crate) mod utils {
     pub(crate) mod jconduit_callbacks;
 }
 
+pub mod compiler;
+pub mod ir;
+pub mod parser;
+
 use crate::generator::generate_conduit;
+use crate::parser::{HeaderParser, preprocess_header};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -44,6 +50,16 @@ pub fn run_cli(cli: Cli) -> Result<()> {
         Commands::Generate(args) => {
             let (toml_config, base_dir) = load_config(args.config)?;
             let ctx: GeneratorContext = GeneratorContext::from(toml_config, base_dir)?;
+            let pre_processed_header = preprocess_header(&ctx.functions_header)?;
+            println!("{}", pre_processed_header);
+            let parser = HeaderParser::new(
+                &pre_processed_header,
+                fs::read_to_string(
+                    "C:/Users/mbert/RustroverProjects/Jconduit/crates/cargo-jconduit/queries.scm",
+                )?
+                .as_str(),
+            );
+            println!("{:?}", parser.parse());
             generate_conduit(&ctx)?;
         }
     }
@@ -61,7 +77,7 @@ fn load_config(config_path: PathBuf) -> Result<(TomlConfig, PathBuf)> {
         .to_path_buf();
 
     let toml_content =
-        std::fs::read_to_string(&absolute_config_path).expect("Failed to read config file");
+        fs::read_to_string(&absolute_config_path).expect("Failed to read config file");
     let config: TomlConfig = toml::from_str(&toml_content)?;
     Ok((config, base_dir))
 }
@@ -331,7 +347,7 @@ impl Default for GeneratorOptions {
             strip_prefix: "".to_string(),
             derive_copy: true,
             derive_default: false,
-            use_core: false ,
+            use_core: false,
             c_naming_conversion: false,
             raw_lines: vec!["#![allow(dead_code, non_camel_case_types, non_snake_case, non_upper_case_globals)]".to_string()],
             layout_tests: true,

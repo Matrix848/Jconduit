@@ -12,6 +12,7 @@ use syn::Signature;
 mod dispatcher_gen;
 mod ffi_gen;
 mod java;
+mod rust;
 
 #[derive(Debug, Default, Clone)]
 pub struct ForeignFunctions {

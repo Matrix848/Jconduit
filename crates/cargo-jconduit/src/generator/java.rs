@@ -1,6 +1,6 @@
 use crate::ProxySettings;
 use crate::generator::ForeignFunctions;
-use crate::utils::formatting::{IndentWriter, capitalize, to_camel_case};
+use crate::utils::formatting::{Writer, capitalize, to_camel_case};
 use anyhow::{Context, Result, bail};
 use askama::Template;
 use cbindgen::ParseConfig;
@@ -355,7 +355,7 @@ pub fn generate_deferred_fn(
     let flat = flatten_params(&params, structs, enums);
     let signature = GeneratedFn::format_signature("void", &java_name, &flat);
 
-    let mut w = IndentWriter::new(1);
+    let mut w = Writer::new();
     w.line(&format!(
         "long payloadSize = {cmd_class}.layout().byteSize();"
     ));
@@ -413,7 +413,7 @@ pub fn generate_direct_fn(
         .join(", ");
     let call = format!("{jextract_class}.jconduit_{fn_name}({args})");
 
-    let mut w = IndentWriter::new(1);
+    let mut w = Writer::new();
     match return_type {
         None => w.line(&format!("{call};")),
         Some(RustType::Ptr(ptr)) => {
@@ -474,7 +474,7 @@ pub fn gen_scratchpad_overloads(
         .map(|p| p.java_name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let mut w = IndentWriter::new(1);
+    let mut w = Writer::new();
 
     if let RustType::Struct(name) = &*out_ptr.inner
         && let Some(e) = enums.get(name)
@@ -590,7 +590,7 @@ fn build_write_nodes(
         .collect()
 }
 
-fn emit_write_nodes(nodes: &[WriteNode], w: &mut IndentWriter) -> Result<()> {
+fn emit_write_nodes(nodes: &[WriteNode], w: &mut Writer) -> Result<()> {
     for WriteNode::Set {
         layout_name,
         offset_expr,

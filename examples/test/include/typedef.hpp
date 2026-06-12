@@ -2,13 +2,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-typedef struct {
+
+typedef struct{
     float x;
     float y;
     float z;
 } Vector3f;
 
-typedef struct __attribute__((aligned(16))) {
+typedef struct alignas(16){
     float x;
     float y;
     float z;
@@ -26,3 +27,5 @@ typedef enum {
     BODY_TYPE_DYNAMIC = 1,
     BODY_TYPE_KINEMATIC = 2,
 } BodyType;
+
+using BodyId = int;

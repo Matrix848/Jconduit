@@ -1,6 +1,7 @@
 pub(crate) fn to_camel_case(s: &str) -> String {
     let mut result = String::new();
     let mut cap_next = false;
+
     for (i, c) in s.chars().enumerate() {
         if c == '_' {
             cap_next = true;
@@ -24,16 +25,16 @@ pub(crate) fn capitalize(s: &str) -> String {
     }
 }
 
-pub(crate) struct IndentWriter {
+pub(crate) struct Writer {
     buf: String,
     level: usize,
 }
 
-impl IndentWriter {
-    pub(crate) fn new(base_level: usize) -> Self {
+impl Writer {
+    pub(crate) fn new() -> Self {
         Self {
             buf: String::new(),
-            level: base_level,
+            level: 0,
         }
     }
 
