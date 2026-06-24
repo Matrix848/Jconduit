@@ -1,4 +1,7 @@
-use crate::parser::{AbstractSyntaxTree, AstItem, HandleType, TypeKind};
+use crate::parser::{AbstractSyntaxTree, AstItem, TypeKind};
+use petgraph::Direction;
+use petgraph::algo::toposort;
+use petgraph::prelude::DiGraphMap;
 use std::collections::HashMap;
 use std::fmt::Display;
 use thiserror::Error;
@@ -11,22 +14,12 @@ pub enum IrError {
     UnsupportedType(String),
     #[error("Enum: {0} uses an unsupported underlying type.")]
     UnsupportedEnumUnderlyingType(String),
-    #[error("Struct: {0} is not a vector.")]
-    CountFieldOnNonVecStruct(String),
-    #[error("Invalid type for vector {0} count. Only size_t and ptrdiff_t are supported.")]
-    InvalidCountType(String),
-    #[error("Struct: {0} does not have a count field but is marked as a vector.")]
-    MissingCountFieldOnVecStruct(String),
-    #[error(
-        "Struct: {0} has a duplicated count field. Only one count field is allowed per struct."
-    )]
-    DuplicatedCountField(String),
+    #[error("Only void functions can be deferred")]
+    NonVoidDeferredFunction(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
-    Void,
-    Bool,
     I8,
     U8,
     I16,
@@ -35,11 +28,14 @@ pub enum PrimitiveType {
     U32,
     I64,
     U64,
-    Float,
-    Double,
     SizeT,
     SsizeT,
     PtrDiffT,
+
+    Void,
+    Bool,
+    Float,
+    Double,
     Uptr,
     Iptr,
     Wchar,
@@ -77,11 +73,9 @@ impl PrimitiveType {
             // Void & Boolean
             "void" => Some(PrimitiveType::Void),
             "bool" => Some(PrimitiveType::Bool),
-
             // 8-Bit Integers
             "int8_t" | "char" | "signedchar" => Some(PrimitiveType::I8),
             "uint8_t" | "unsignedchar" | "char8_t" => Some(PrimitiveType::U8),
-
             // 16-Bit Integers
             "int16_t" | "short" | "shortint" | "signedshort" | "signedshortint" => {
                 Some(PrimitiveType::I16)
@@ -89,37 +83,42 @@ impl PrimitiveType {
             "uint16_t" | "unsignedshort" | "unsignedshortint" | "char16_t" => {
                 Some(PrimitiveType::U16)
             }
-
             // 32-Bit Integers
             "int32_t" | "int" | "signedint" => Some(PrimitiveType::I32),
             "uint32_t" | "unsignedint" | "char32_t" => Some(PrimitiveType::U32),
-
             // 64-Bit Integers
             "int64_t" | "longlong" | "longlongint" | "signedlonglong" | "signedlonglongint" => {
                 Some(PrimitiveType::I64)
             }
             "uint64_t" | "unsignedlonglong" | "unsignedlonglongint" => Some(PrimitiveType::U64),
-
-            // Platform-Dependent Architecture Integers (Fallback mappings for standard 64-bit targets)
+            // Platform-dependent Arch Ints
             "long" | "longint" | "signedlong" | "signedlongint" => Some(PrimitiveType::I64),
             "unsignedlong" | "unsignedlongint" => Some(PrimitiveType::U64),
-
             // Floating Point
             "float" => Some(PrimitiveType::Float),
             "double" | "longdouble" => Some(PrimitiveType::Double),
-
-            // Size & Pointer Arithmetics
+            // Size & Pointer Types
             "size_t" => Some(PrimitiveType::SizeT),
             "ssize_t" => Some(PrimitiveType::SsizeT),
             "ptrdiff_t" => Some(PrimitiveType::PtrDiffT),
             "uintptr_t" => Some(PrimitiveType::Uptr),
             "intptr_t" => Some(PrimitiveType::Iptr),
-
             // OS Specific Wide Strings
             "wchar_t" => Some(PrimitiveType::Wchar),
-
-            // Not a primitive (likely a User-Defined Class, Struct, or Enum)
             _ => None,
+        }
+    }
+
+    pub fn byte_size(&self) -> u64 {
+        match self {
+            Self::I8 | Self::U8 => 1,
+            Self::I16 | Self::U16 => 2,
+            Self::I32 | Self::U32 | Self::Float => 4,
+            Self::I64 | Self::U64 | Self::Double => 8,
+            Self::SizeT | Self::SsizeT | Self::PtrDiffT | Self::Uptr | Self::Iptr => 8,
+            Self::Bool => 1,
+            Self::Void => 0,
+            Self::Wchar => 4,
         }
     }
 }
@@ -127,7 +126,7 @@ impl PrimitiveType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IrTypeKind {
     Primitive(PrimitiveType),
-    UserDefined(String),
+    Named(String),
     Pointer {
         to: Box<IrType>,
         is_ptr_const: bool,
@@ -137,7 +136,7 @@ pub enum IrTypeKind {
     },
     FixedArray {
         element_type: Box<IrType>,
-        size: usize,
+        size: u64,
     },
     FunctionPointer {
         return_type: Box<IrType>,
@@ -149,6 +148,30 @@ pub enum IrTypeKind {
 pub struct IrType {
     pub kind: IrTypeKind,
     pub is_base_const: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrTypedVar {
+    pub name: String,
+    pub ty: IrType,
+}
+
+impl From<IrParameter> for IrTypedVar {
+    fn from(param: IrParameter) -> IrTypedVar {
+        IrTypedVar {
+            name: param.name,
+            ty: param.ty,
+        }
+    }
+}
+
+impl From<IrField> for IrTypedVar {
+    fn from(field: IrField) -> IrTypedVar {
+        IrTypedVar {
+            name: field.name,
+            ty: field.ty,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,18 +192,16 @@ pub struct IrFunction {
     pub name: String,
     pub params: Vec<IrParameter>,
     pub return_type: IrType,
-    pub is_direct: bool,
-    pub no_scratchpad: bool,
-    pub out_handle: Option<HandleType>,
+    pub is_deferred: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrStruct {
     pub name: String,
     pub fields: Vec<IrField>,
-    pub alignment: Option<usize>,
+    pub alignment: Option<u64>,
     pub is_vec: bool,
-    pub count_field_idx: Option<usize>,
+    pub flat_view: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,17 +238,77 @@ pub enum Symbol<'a> {
     Function(&'a AstItem),
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct UnifiedRepresentation {
-    pub typedefs: Vec<IrTypeDef>,
-    pub structs: Vec<IrStruct>,
-    pub enums: Vec<IrEnum>,
-    pub functions: Vec<IrFunction>,
+pub type TypeDefsMap = HashMap<String, IrTypeDef>;
+pub type StructsMap = HashMap<String, IrStruct>;
+pub type EnumsMap = HashMap<String, IrEnum>;
+pub type DirectFunctionsMap = HashMap<String, IrFunction>;
+pub type DeferredFunctionsMap = HashMap<String, (u32, IrFunction)>;
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct InterRepr {
+    pub typedefs: TypeDefsMap,
+    pub structs: StructsMap,
+    pub enums: EnumsMap,
+    pub direct_functions: DirectFunctionsMap,
+    pub deferred_functions: DeferredFunctionsMap,
+}
+
+impl InterRepr {
+    pub fn size_of(&self, ir_type_kind: &IrTypeKind) -> u64 {
+        match ir_type_kind {
+            IrTypeKind::Primitive(p) => p.byte_size(),
+            IrTypeKind::Named(name) => {
+                if let Some(ty) = self.typedefs.get(name) {
+                    return self.size_of(&ty.target.kind);
+                }
+                if let Some(ty) = self.structs.get(name) {
+                    let mut size: u64 = 0;
+                    ty.fields.iter().for_each(|field| {
+                        let field_size = self.size_of(&field.ty.kind);
+                        let alignment = self.type_alignment(&field.ty.kind);
+                        size = alignment.map_or(size, |alignment| size.next_multiple_of(alignment));
+                        size += field_size;
+                    });
+                    return size;
+                }
+                if let Some(ty) = self.enums.get(name) {
+                    return ty.underlying_type.byte_size();
+                }
+                panic!("Unknown type: {}", name);
+            }
+            IrTypeKind::FixedArray { element_type, size } => {
+                size * self.size_of(&element_type.kind)
+            }
+            IrTypeKind::Pointer { .. }
+            | IrTypeKind::Reference { .. }
+            | IrTypeKind::FunctionPointer { .. } => 8,
+        }
+    }
+
+    fn extract_struct_field(&self, ir_type_kind: &IrTypeKind) -> Option<&IrStruct> {
+        match ir_type_kind {
+            IrTypeKind::Named(name) => {
+                if let Some(s) = self.structs.get(name) {
+                    Some(s)
+                } else if let Some(t) = self.typedefs.get(name) {
+                    self.extract_struct_field(&t.target.kind)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn type_alignment(&self, ir_type_kind: &IrTypeKind) -> Option<u64> {
+        self.extract_struct_field(ir_type_kind)?.alignment
+    }
 }
 
 pub struct Lowerer<'a> {
     pub symbols: HashMap<String, Symbol<'a>>,
 }
+
 impl<'a> Default for Lowerer<'a> {
     fn default() -> Self {
         Self::new()
@@ -241,13 +322,12 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    pub fn lower(&mut self, ast: &'a AbstractSyntaxTree) -> Result<UnifiedRepresentation, IrError> {
+    pub fn lower(&mut self, ast: &'a AbstractSyntaxTree) -> Result<InterRepr, IrError> {
         for item in &ast.items {
             match item {
                 AstItem::TypeDef { name, .. } => {
                     self.symbols.insert(name.clone(), Symbol::TypeDef(item));
                 }
-
                 AstItem::Struct { name, .. } => {
                     self.symbols.insert(name.clone(), Symbol::Struct(item));
                 }
@@ -260,15 +340,21 @@ impl<'a> Lowerer<'a> {
             }
         }
 
-        let mut ir = UnifiedRepresentation::default();
+        let mut ir = InterRepr::default();
+        let mut deferred_count = 0;
+
+        let mut structs_dag = DiGraphMap::<&str, ()>::new();
 
         for item in &ast.items {
             match item {
                 AstItem::TypeDef { name, target } => {
-                    ir.typedefs.push(IrTypeDef {
-                        name: name.clone(),
-                        target: self.lower_type(target)?,
-                    });
+                    ir.typedefs.insert(
+                        name.clone(),
+                        IrTypeDef {
+                            name: name.clone(),
+                            target: self.lower_type(target)?,
+                        },
+                    );
                 }
                 AstItem::Enum {
                     name,
@@ -314,11 +400,14 @@ impl<'a> Lowerer<'a> {
                         })
                         .collect();
 
-                    ir.enums.push(IrEnum {
-                        name: name.clone(),
-                        underlying_type,
-                        variants,
-                    })
+                    ir.enums.insert(
+                        name.clone(),
+                        IrEnum {
+                            name: name.clone(),
+                            underlying_type,
+                            variants,
+                        },
+                    );
                 }
                 AstItem::Function {
                     name,
@@ -339,87 +428,101 @@ impl<'a> Lowerer<'a> {
 
                     let ir_return_type = self.lower_type(return_type)?;
 
-                    if ir_return_type.kind == IrTypeKind::Primitive(PrimitiveType::Void) {
-                        ir.functions.push(IrFunction {
-                            name: name.to_string(),
-                            params: ir_params,
-                            return_type: ir_return_type,
-                            is_direct: attributes.is_direct(),
-                            no_scratchpad: attributes.is_no_scratchpad(),
-                            out_handle: attributes.get_handle_type(),
-                        });
-                        continue;
+                    if attributes.is_deferred() {
+                        if ir_return_type.kind != IrTypeKind::Primitive(PrimitiveType::Void) {
+                            return Err(IrError::UnsupportedEnumUnderlyingType(name.clone()));
+                        }
+                        ir.deferred_functions.insert(
+                            name.clone(),
+                            (
+                                deferred_count,
+                                IrFunction {
+                                    name: name.to_string(),
+                                    params: ir_params,
+                                    return_type: ir_return_type,
+                                    is_deferred: false,
+                                },
+                            ),
+                        );
+                        deferred_count += 1;
+                    } else {
+                        ir.direct_functions.insert(
+                            name.clone(),
+                            IrFunction {
+                                name: name.to_string(),
+                                params: ir_params,
+                                return_type: ir_return_type,
+                                is_deferred: true,
+                            },
+                        );
                     }
-
-                    ir.functions.push(IrFunction {
-                        name: name.to_string(),
-                        params: ir_params,
-                        return_type: ir_return_type,
-                        is_direct: true,
-                        no_scratchpad: attributes.is_no_scratchpad(),
-                        out_handle: attributes.get_handle_type(),
-                    });
                 }
                 AstItem::Struct {
                     name,
                     fields,
                     alignment,
-                    is_vec,
+                    attributes,
                 } => {
                     let mut ir_fields = Vec::new();
-                    let mut count_field_idx = None;
 
-                    if *is_vec {
-                        for (i, f) in fields.iter().enumerate() {
-                            let field_ty = self.lower_type(&f.ty)?;
+                    let is_vec = ir_fields.last().is_some_and(|f: &IrField| {
+                        matches!(f.ty.kind, IrTypeKind::FixedArray { size: 0, .. })
+                    });
 
-                            let is_count = f.attributes.is_count();
-                            if is_count {
-                                if let IrTypeKind::Primitive(primitive) = field_ty.kind
-                                    && matches!(
-                                        primitive,
-                                        PrimitiveType::SizeT | PrimitiveType::PtrDiffT
-                                    )
-                                {
-                                    if count_field_idx.is_some() {
-                                        return Err(IrError::DuplicatedCountField(name.clone()));
-                                    }
-                                    count_field_idx = Some(i);
-                                } else {
-                                    return Err(IrError::InvalidCountType(name.clone()));
-                                }
-                            }
-
-                            ir_fields.push(IrField {
-                                name: f.name.clone(),
-                                ty: field_ty,
-                            });
-                        }
-
-                        if count_field_idx.is_none() {
-                            return Err(IrError::MissingCountFieldOnVecStruct(name.clone()));
-                        }
-                    } else {
-                        for f in fields {
-                            if f.attributes.is_count() {
-                                return Err(IrError::CountFieldOnNonVecStruct(name.clone()));
-                            }
-
-                            ir_fields.push(IrField {
-                                name: f.name.clone(),
-                                ty: self.lower_type(&f.ty)?,
-                            });
-                        }
+                    for f in fields {
+                        ir_fields.push(IrField {
+                            name: f.name.clone(),
+                            ty: self.lower_type(&f.ty)?,
+                        });
                     }
 
-                    ir.structs.push(IrStruct {
-                        name: name.clone(),
-                        fields: ir_fields,
-                        alignment: *alignment,
-                        is_vec: *is_vec,
-                        count_field_idx,
-                    });
+                    ir.structs.insert(
+                        name.clone(),
+                        IrStruct {
+                            name: name.clone(),
+                            fields: ir_fields,
+                            alignment: *alignment,
+                            is_vec,
+                            flat_view: attributes.has_flat_view(),
+                        },
+                    );
                 }
+            }
+        }
+
+        ir.structs.values().for_each(|ir_struct| {
+            ir_struct.fields.iter().for_each(|f| {
+                let f_struct = ir.extract_struct_field(&f.ty.kind);
+                if f_struct.is_none() {
+                    return;
+                }
+                structs_dag.add_edge(f_struct.unwrap().name.as_str(), ir_struct.name.as_str(), ());
+            })
+        });
+
+        let updates: Vec<(String, Option<u64>)> = match toposort(&structs_dag, None) {
+            Ok(order) => order
+                .into_iter()
+                .filter(|struct_name| ir.structs.contains_key(*struct_name))
+                .map(|struct_name| {
+                    let alignment = structs_dag
+                        .neighbors_directed(struct_name, Direction::Incoming)
+                        .filter_map(|f| ir.structs.get(f).and_then(|s| s.alignment))
+                        .max();
+                    (struct_name.to_owned(), alignment)
+                })
+                .collect(),
+            Err(cycle) => panic!(
+                "Error: Cyclic dependency detected involving struct: {}",
+                cycle.node_id()
+            ),
+        };
+
+        drop(structs_dag);
+
+        for (struct_name, alignment) in updates {
+            if let Some(ir_struct) = ir.structs.get_mut(&struct_name) {
+                ir_struct.alignment = alignment;
             }
         }
 
@@ -432,7 +535,7 @@ impl<'a> Lowerer<'a> {
                 let kind = if let Some(primitive) = self.match_primitive(name) {
                     IrTypeKind::Primitive(primitive)
                 } else if self.symbols.contains_key(name) {
-                    IrTypeKind::UserDefined(name.clone())
+                    IrTypeKind::Named(name.clone())
                 } else {
                     return Err(IrError::UnknownType(name.clone()));
                 };
@@ -477,6 +580,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    #[inline]
     pub fn match_primitive(&self, name: &str) -> Option<PrimitiveType> {
         PrimitiveType::from(name).or_else(|| {
             let normalized: String = name

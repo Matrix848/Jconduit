@@ -1,4 +1,4 @@
-pub(crate) fn to_camel_case(s: &str) -> String {
+pub fn to_camel_case(s: &str) -> String {
     let mut result = String::new();
     let mut cap_next = false;
 
@@ -17,7 +17,7 @@ pub(crate) fn to_camel_case(s: &str) -> String {
     result
 }
 
-pub(crate) fn capitalize(s: &str) -> String {
+pub fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
         None => String::new(),
@@ -25,20 +25,46 @@ pub(crate) fn capitalize(s: &str) -> String {
     }
 }
 
-pub(crate) struct Writer {
+pub fn to_pascal_case(s: &str) -> String {
+    capitalize(&to_camel_case(s))
+}
+
+pub fn screaming_snake_to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .filter(|word| !word.is_empty()) // Handles accidental double underscores "__"
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(f) => {
+                    // Capitalize the first letter, lowercase the remaining letters
+                    f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+            }
+        })
+        .collect()
+}
+
+pub struct Writer {
     buf: String,
     level: usize,
 }
 
+impl Default for Writer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Writer {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             buf: String::new(),
             level: 0,
         }
     }
 
-    pub(crate) fn line(&mut self, s: &str) {
+    pub fn line(&mut self, s: &str) {
         if !self.buf.is_empty() {
             self.buf.push('\n');
         }
@@ -46,13 +72,13 @@ impl Writer {
         self.buf.push_str(s);
     }
 
-    pub(crate) fn indent(&mut self) {
+    pub fn indent(&mut self) {
         self.level += 1;
     }
-    pub(crate) fn dedent(&mut self) {
+    pub fn dedent(&mut self) {
         self.level = self.level.saturating_sub(1);
     }
-    pub(crate) fn finish(self) -> String {
+    pub fn finish(self) -> String {
         self.buf
     }
 }

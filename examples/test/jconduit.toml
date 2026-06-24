@@ -1,6 +1,5 @@
 [generator]
-crate_name = "engine-dispatcher"
-proxy_class_name = "EngineConduit"
-package = "foo.bar"
-functions_header = "./include/functions.hpp"
-typedef_header = "./include/typedef.hpp"
+name = "simple_example"
+version = "0.1.0"
+package = "com.example"
+source_header = "./include/example.hpp"

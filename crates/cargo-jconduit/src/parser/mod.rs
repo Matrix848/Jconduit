@@ -2,6 +2,7 @@ use crate::compiler::{Compiler, CompilerError};
 use regex::Regex;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::default::Default;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem;
@@ -16,15 +17,70 @@ use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
 pub enum ParseError {
     #[error("Preprocessing failed")]
     HeaderPreprocessFailed(#[from] CompilerError),
-    #[error("Invalid attribute token: '{0}'")]
-    InvalidAttributeToken(String),
-    #[error("Attribute '{0}' missing required arguments")]
-    MissingArguments(String),
-    #[error("Invalid out type: '{0}'")]
-    InvalidOutType(String),
+    #[error("Unknown attribute: '{0}'")]
+    UnknownAttribute(String),
+    #[error("Invalid attribute: '{0}'")]
+    InvalidAttribute(String),
     #[error("Duplicate attribute: '{0}'")]
     DuplicateAttribute(String),
 }
+
+pub const SYSTEM_PRIMITIVES: &[&str] = &[
+    // Core & Void
+    "void",
+    "bool",
+    // Fixed-Width Signed
+    "int8_t",
+    "int16_t",
+    "int32_t",
+    "int64_t",
+    // Fixed-Width Unsigned
+    "uint8_t",
+    "uint16_t",
+    "uint32_t",
+    "uint64_t",
+    // Standard Built-in Signed
+    "char",
+    "signed char",
+    "short",
+    "short int",
+    "signed short",
+    "signed short int",
+    "int",
+    "signed int",
+    "long",
+    "long int",
+    "signed long",
+    "signed long int",
+    "long long",
+    "long long int",
+    "signed long long",
+    "signed long long int",
+    // Standard Built-in Unsigned
+    "unsigned char",
+    "unsigned short",
+    "unsigned short int",
+    "unsigned int",
+    "unsigned long",
+    "unsigned long int",
+    "unsigned long long",
+    "unsigned long long int",
+    // Floating Point
+    "float",
+    "double",
+    "long double",
+    // Memory, Sizes, and Pointers
+    "size_t",
+    "ssize_t",
+    "ptrdiff_t",
+    "uintptr_t",
+    "intptr_t",
+    // Wide & Unicode Characters
+    "wchar_t",
+    "char8_t",
+    "char16_t",
+    "char32_t",
+];
 
 pub fn preprocess_header(header: &Path) -> Result<String, ParseError> {
     let compiler = Compiler::get();
@@ -44,6 +100,18 @@ pub trait Attribute: Debug + Eq + Hash + Clone {
     fn parse_attrs(s: &str) -> Result<Self, ParseError>
     where
         Self: Sized;
+
+    fn parse_attr(attr: &str) -> Result<(&str, Option<&str>), ParseError> {
+        let trimmed = attr
+            .strip_prefix("jcd::")
+            .ok_or_else(|| ParseError::InvalidAttribute(attr.to_string()))?
+            .trim();
+
+        match trimmed.split_once('(') {
+            Some((name, rest)) => Ok((name.trim(), Some(rest))),
+            None => Ok((trimmed, None)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,10 +148,7 @@ impl<T: Attribute> AttributesMap<T> {
     pub fn insert(&mut self, attr: T) -> Result<(), ParseError> {
         let key = mem::discriminant(&attr);
         match self.map.entry(key) {
-            Entry::Occupied(_) => {
-                // We only format the error string if it actually fails
-                Err(ParseError::DuplicateAttribute(format!("{:?}", attr)))
-            }
+            Entry::Occupied(_) => Err(ParseError::DuplicateAttribute(format!("{:?}", attr))),
             Entry::Vacant(entry) => {
                 entry.insert(attr);
                 Ok(())
@@ -126,7 +191,7 @@ pub enum TypeKind {
     Reference(Box<TypeKind>),
     FixedArray {
         element_type: Box<TypeKind>,
-        size: usize,
+        size: u64,
     },
     FunctionPointer {
         return_type: Box<TypeKind>,
@@ -142,34 +207,15 @@ pub struct Field {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FieldAttributes {
-    Count,
-}
+pub enum FieldAttributes {}
 
 impl Attribute for FieldAttributes {
     fn parse_attrs(s: &str) -> Result<Self, ParseError> {
-        let trimmed = s
-            .strip_prefix("jcd::")
-            .ok_or_else(|| ParseError::InvalidAttributeToken(s.to_string()))?
-            .trim();
-
-        let (attr_name, rest) = match trimmed.split_once('(') {
-            Some((name, rest)) => (name.trim(), Some(rest)),
-            None => (trimmed, None),
-        };
-
-        match attr_name {
-            "count" if rest.is_none() => Ok(Self::Count),
-            _ => Err(ParseError::InvalidOutType(attr_name.to_string())),
-        }
+        Err(ParseError::InvalidAttribute(s.to_string()))
     }
 }
 
-impl AttributesMap<FieldAttributes> {
-    pub fn is_count(&self) -> bool {
-        self.has(&FieldAttributes::Count)
-    }
-}
+impl AttributesMap<FieldAttributes> {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parameter {
@@ -185,19 +231,10 @@ pub enum ParameterAttributes {
 
 impl Attribute for ParameterAttributes {
     fn parse_attrs(s: &str) -> Result<Self, ParseError> {
-        let trimmed = s
-            .strip_prefix("jcd::")
-            .ok_or_else(|| ParseError::InvalidAttributeToken(s.to_string()))?
-            .trim();
-
-        let (attr_name, rest) = match trimmed.split_once('(') {
-            Some((name, rest)) => (name.trim(), Some(rest)),
-            None => (trimmed, None),
-        };
-
-        match attr_name {
-            "out" if rest.is_none() => Ok(Self::Out),
-            _ => Err(ParseError::InvalidOutType(attr_name.to_string())),
+        match Self::parse_attr(s)? {
+            ("out", None) => Ok(Self::Out),
+            ("out", Some(_)) => Err(ParseError::InvalidAttribute(s.to_string())),
+            _ => Err(ParseError::UnknownAttribute(s.to_string())),
         }
     }
 }
@@ -210,66 +247,50 @@ impl AttributesMap<ParameterAttributes> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FunctionAttributes {
-    Direct,
-    NoScratchpad,
-    OutHandle(HandleType),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum HandleType {
-    Clone(Option<String>),
-    Copy(Option<String>),
-    UnsafeView(Option<String>),
-    AtomicView(Option<String>),
-}
-
-impl Default for HandleType {
-    fn default() -> Self {
-        Self::Copy(None)
-    }
+    Deferred,
+    FlatViewOf(String),
 }
 
 impl Attribute for FunctionAttributes {
     fn parse_attrs(s: &str) -> Result<Self, ParseError> {
-        let trimmed = s
-            .strip_prefix("jcd::")
-            .ok_or_else(|| ParseError::InvalidAttributeToken(s.to_string()))?
-            .trim();
-
-        let (attr_name, rest) = match trimmed.split_once('(') {
-            Some((name, rest)) => (name.trim(), Some(rest)),
-            None => (trimmed, None),
-        };
-
-        match attr_name {
-            "direct" => Ok(Self::Direct),
-            "no_scratchpad" => Ok(Self::NoScratchpad),
-            "handle" => {
-                let inner = rest
-                    .ok_or_else(|| ParseError::MissingArguments(s.to_string()))?
-                    .strip_suffix(')')
-                    .ok_or_else(|| ParseError::InvalidAttributeToken(s.to_string()))?;
-
-                let mut tokens = inner.split(',').map(str::trim).filter(|s| !s.is_empty());
-
-                let strategy = tokens
-                    .next()
-                    .ok_or_else(|| ParseError::MissingArguments("missing strategy".to_string()))?;
-
-                let custom_fn = tokens.next().map(str::to_string);
-
-                let handle = match strategy {
-                    "copy" => HandleType::Copy(custom_fn),
-                    "clone" => HandleType::Clone(custom_fn),
-                    "unsafe_view" => HandleType::UnsafeView(custom_fn),
-                    "atomic_view" => HandleType::AtomicView(custom_fn),
-                    _ => return Err(ParseError::InvalidHandleType(strategy.to_string())),
-                };
-
-                Ok(Self::OutHandle(handle))
-            }
-            _ => Err(ParseError::InvalidOutType(attr_name.to_string())),
+        match Self::parse_attr(s)? {
+            ("deferred", None) => Ok(Self::Deferred),
+            ("view", Some(arg)) => Ok(Self::FlatViewOf(arg.to_string())),
+            ("deferred" | "view", _) => Err(ParseError::InvalidAttribute(s.to_string())),
+            _ => Err(ParseError::UnknownAttribute(s.to_string())),
         }
+    }
+}
+impl AttributesMap<FunctionAttributes> {
+    pub fn is_deferred(&self) -> bool {
+        self.has(&FunctionAttributes::Deferred)
+    }
+    pub fn get_flat_view(&self) -> Option<&str> {
+        match self.get(&FunctionAttributes::FlatViewOf(Default::default()))? {
+            FunctionAttributes::FlatViewOf(ty) => Some(ty),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StructAttributes {
+    FlatView,
+}
+
+impl Attribute for StructAttributes {
+    fn parse_attrs(s: &str) -> Result<Self, ParseError> {
+        match Self::parse_attr(s)? {
+            ("view", None) => Ok(Self::FlatView),
+            ("view", _) => Err(ParseError::InvalidAttribute(s.to_string())),
+            _ => Err(ParseError::UnknownAttribute(s.to_string())),
+        }
+    }
+}
+
+impl AttributesMap<StructAttributes> {
+    pub fn has_flat_view(&self) -> bool {
+        self.has(&StructAttributes::FlatView)
     }
 }
 
@@ -282,8 +303,8 @@ pub enum AstItem {
     Struct {
         name: String,
         fields: Vec<Field>,
-        alignment: Option<usize>,
-        is_vec: bool,
+        alignment: Option<u64>,
+        attributes: AttributesMap<StructAttributes>,
     },
     Enum {
         name: String,
@@ -296,24 +317,6 @@ pub enum AstItem {
         return_type: TypeKind,
         attributes: AttributesMap<FunctionAttributes>,
     },
-}
-
-impl AttributesMap<FunctionAttributes> {
-    pub fn is_direct(&self) -> bool {
-        self.has(&FunctionAttributes::Direct)
-    }
-    pub fn is_no_scratchpad(&self) -> bool {
-        self.has(&FunctionAttributes::NoScratchpad)
-    }
-
-    pub fn get_handle_type(&self) -> Option<HandleType> {
-        let handle_attr = self.get(&FunctionAttributes::OutHandle(Default::default()))?;
-        if let FunctionAttributes::OutHandle(handle_ty) = handle_attr {
-            Some(handle_ty.clone())
-        } else {
-            None
-        }
-    }
 }
 
 impl AstItem {
@@ -335,25 +338,6 @@ impl AstItem {
 pub struct EnumVariant {
     pub name: String,
     pub value: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeRegistry {
-    pub typedefs: HashMap<String, TypeKind>,
-    pub structs: HashMap<String, StructMetadata>,
-    pub enums: HashMap<String, EnumMetadata>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructMetadata {
-    pub alignment: Option<usize>,
-    pub fields: Vec<Field>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnumMetadata {
-    pub underlying_type: TypeKind,
-    pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug, Default)]
@@ -395,13 +379,12 @@ impl HeaderParser {
 
         let mut ast = AbstractSyntaxTree::default();
         let source_bytes = self.source.as_bytes();
-        let capture_names = self.query.capture_names();
 
         let cap = |name| self.query.capture_index_for_name(name);
         let alias_idx = cap("alias_target");
         let typedef_idx = cap("typedef_target");
-        let struct_decl_idx = cap("struct_decl");
         let struct_body_idx = cap("struct_body");
+        let struct_decl_idx = cap("struct_decl");
         let align_val_idx = cap("align_val");
         let enum_base_idx = cap("enum_base");
         let enum_body_idx = cap("enum_body");
@@ -411,27 +394,22 @@ impl HeaderParser {
         let struct_name_idx = cap("struct_name").unwrap_or(0);
         let enum_name_idx = cap("enum_name").unwrap_or(0);
 
-        let mut matches = cursor.captures(&self.query, tree.root_node(), source_bytes);
+        let mut matches = cursor.matches(&self.query, tree.root_node(), source_bytes);
 
-        while let Some((mat, _)) = matches.next() {
+        while let Some(mat) = matches.next() {
             let first_cap = &mat.captures[0];
-            let tag = capture_names[first_cap.index as usize];
 
             let node_text = |node| self.node_text(node);
             let first_node = |idx: Option<u32>| -> Option<Node> {
                 idx.and_then(|i| mat.nodes_for_capture_index(i).next())
             };
-
             match mat.pattern_index {
                 // type alias / typedef
                 0 | 1 => {
-                    let target_idx = if tag == "alias_name" {
-                        alias_idx
-                    } else {
-                        typedef_idx
-                    };
-
-                    if let Some(target) = first_node(target_idx) {
+                    if let (Some(_), Some(target)) = (
+                        first_node(cap("alias_name")).or_else(|| first_node(cap("typedef_name"))),
+                        first_node(alias_idx).or_else(|| first_node(typedef_idx)),
+                    ) {
                         let text = node_text(target);
                         if !text.contains("struct") && !text.contains("enum") {
                             let item = AstItem::TypeDef {
@@ -451,21 +429,18 @@ impl HeaderParser {
                         first_node(Some(struct_name_idx)),
                         first_node(struct_body_idx),
                     ) {
+                        let decl = first_node(struct_decl_idx);
                         let alignment = first_node(align_val_idx)
-                            .and_then(|n| node_text(n).parse::<usize>().ok());
-
-                        let is_vec = first_node(struct_decl_idx)
-                            .and_then(|d| d.child(0))
-                            .filter(|c| c.kind() == "attribute_declaration")
-                            .map(|c| node_text(c).contains("jcd::vec"))
-                            .unwrap_or(false);
+                            .and_then(|n| node_text(n).parse::<u64>().ok());
 
                         let item = AstItem::Struct {
                             name: node_text(name_node),
                             fields: self.extract_fields(body)?,
                             alignment,
-                            is_vec,
+                            attributes: decl
+                                .map_or(Ok(Default::default()), |d| self.parse_attrs(d))?,
                         };
+
                         if !ast.already_parsed(&item) {
                             ast.items.push(item);
                         }
@@ -474,14 +449,14 @@ impl HeaderParser {
 
                 // enum
                 4 => {
-                    if let Some(name_node) = first_node(Some(enum_name_idx))
+                    if let Some(name_root) = first_node(Some(enum_name_idx))
                         && let Some(body) = first_node(enum_body_idx)
                     {
                         let underlying_type =
                             first_node(enum_base_idx).map(|n| self.resolve_type(n, None));
 
                         let item = AstItem::Enum {
-                            name: node_text(name_node),
+                            name: node_text(name_root),
                             underlying_type,
                             variants: self.extract_enum_variants(body),
                         };
@@ -508,18 +483,11 @@ impl HeaderParser {
                         continue;
                     };
 
-                    let attributes = match decl.child(0) {
-                        Some(first) if first.kind() == "attribute_declaration" => {
-                            Some(parse_attributes(node_text(first).as_str())?)
-                        }
-                        _ => None,
-                    };
-
                     let item = AstItem::Function {
                         name: fn_name,
                         params: self.extract_parameters(params)?,
                         return_type: self.resolve_type(type_node, Some(name_root)),
-                        attributes: attributes.unwrap_or_default(),
+                        attributes: self.parse_attrs(decl)?,
                     };
                     if !ast.already_parsed(&item) {
                         ast.items.push(item);
@@ -530,69 +498,22 @@ impl HeaderParser {
             }
         }
 
-        pub const SYSTEM_PRIMITIVES: &[&str] = &[
-            // Core & Void
-            "void",
-            "bool",
-            // Fixed-Width Signed
-            "int8_t",
-            "int16_t",
-            "int32_t",
-            "int64_t",
-            // Fixed-Width Unsigned
-            "uint8_t",
-            "uint16_t",
-            "uint32_t",
-            "uint64_t",
-            // Standard Built-in Signed
-            "char",
-            "signed char",
-            "short",
-            "short int",
-            "signed short",
-            "signed short int",
-            "int",
-            "signed int",
-            "long",
-            "long int",
-            "signed long",
-            "signed long int",
-            "long long",
-            "long long int",
-            "signed long long",
-            "signed long long int",
-            // Standard Built-in Unsigned
-            "unsigned char",
-            "unsigned short",
-            "unsigned short int",
-            "unsigned int",
-            "unsigned long",
-            "unsigned long int",
-            "unsigned long long",
-            "unsigned long long int",
-            // Floating Point
-            "float",
-            "double",
-            "long double",
-            // Memory, Sizes, and Pointers
-            "size_t",
-            "ssize_t",
-            "ptrdiff_t",
-            "uintptr_t",
-            "intptr_t",
-            // Wide & Unicode Characters
-            "wchar_t",
-            "char8_t",
-            "char16_t",
-            "char32_t",
-        ];
-
         ast.items.retain(|item| {
             let name = item.name();
             !name.is_empty() && !name.starts_with('_') && !SYSTEM_PRIMITIVES.contains(&name)
         });
 
         Ok(ast)
+    }
+
+    fn parse_attrs<T: Attribute>(&self, decl: Node) -> Result<AttributesMap<T>, ParseError> {
+        Ok((match decl.child(0) {
+            Some(first) if first.kind() == "attribute_declaration" => {
+                Some(parse_attributes(self.node_text(first).as_str())?)
+            }
+            _ => None,
+        })
+        .unwrap_or_default())
     }
 
     fn resolve_type(&self, type_node: Node, decl_node: Option<Node>) -> TypeKind {
@@ -763,6 +684,7 @@ impl HeaderParser {
         node
     }
 
+    #[inline]
     fn find_declaration_type<'a>(&self, node: Node<'a>) -> Option<Node<'a>> {
         let mut current = node.parent();
         while let Some(parent) = current {

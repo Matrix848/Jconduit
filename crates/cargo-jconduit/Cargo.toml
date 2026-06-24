@@ -1,7 +1,7 @@
 [package]
 name = "cargo-jconduit"
-version = "0.1.1-alpha"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "Cargo tool that generates a Rust-Java FFI bridge using user-defined C headers"
 homepage = "https://github.com/Matrix848/Jconduit"
 repository = "https://github.com/Matrix848/Jconduit"
@@ -25,19 +25,20 @@ clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
-anyhow = "1.0.102"
-bindgen = "0.72.1"
+anyhow = "1.0"
 toml = "1.1"
-prettyplease = "0.2.37"
-dunce = "1.0.5"
-cbindgen = "0.29.3"
-askama = "0.16.0"
-thiserror = "2.0.18"
-log = "0.4.32"
-tree-sitter = "0.26.9"
-tree-sitter-cpp = "0.23.4"
-env_logger = { version = "0.11.10", optional = true }
-regex = "1.12.4"
+prettyplease = "0.2"
+dunce = "1.0"
+askama = "0.16"
+thiserror = "2.0"
+log = "0.4"
+tree-sitter = "0.26"
+tree-sitter-cpp = "0.23"
+env_logger = { version = "0.11", optional = true }
+regex = "1.12"
+indoc = "2.0"
+proc-macro2 = "1.0"
+petgraph = "0.8.3"
 
 
 [features]
