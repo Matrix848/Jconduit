@@ -285,7 +285,7 @@ impl InterRepr {
         }
     }
 
-    fn extract_struct_field(&self, ir_type_kind: &IrTypeKind) -> Option<&IrStruct> {
+    pub fn extract_struct_field(&self, ir_type_kind: &IrTypeKind) -> Option<&IrStruct> {
         match ir_type_kind {
             IrTypeKind::Named(name) => {
                 if let Some(s) = self.structs.get(name) {
@@ -297,6 +297,14 @@ impl InterRepr {
                 }
             }
             _ => None,
+        }
+    }
+
+    pub fn resolve_inner_struct(&self, of: &str) -> Option<&IrStruct> {
+        if let Some(ty) = self.typedefs.get(of) {
+            self.extract_struct_field(&ty.target.kind)
+        } else {
+            self.structs.get(of)
         }
     }
 

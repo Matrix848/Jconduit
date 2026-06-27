@@ -146,7 +146,7 @@ public final class {{ proxy_class_name }} {
 
         MemorySegment commandsSlice = threadState.buffer.asSlice(0, threadState.cursor);
 
-        {{ jextract_class_name }}.flush_buffer(commandsSlice);
+        {{ jxt_class_name }}.flush_buffer(commandsSlice);
         threadState.reset();
     }
 

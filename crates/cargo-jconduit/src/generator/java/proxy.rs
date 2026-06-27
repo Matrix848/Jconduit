@@ -14,7 +14,7 @@ use askama::Template;
 pub struct ProxyTemplate {
     package: String,
     jxt_package: String,
-    jextract_class_name: String,
+    jxt_class_name: String,
     proxy_class_name: String,
     deferred_fns: Vec<TemplateFn>,
     direct_fns: Vec<TemplateFn>,
@@ -26,7 +26,7 @@ pub struct ProxyTemplate {
 pub struct ProxyEmitter<'a> {
     package: String,
     jxt_package: String,
-    jextract_class_name: String,
+    jxt_class_name: String,
     proxy_class_name: String,
     proxy_settings: ProxySettings,
     jr: &'a InterRepr,
@@ -37,7 +37,7 @@ impl<'a> ProxyEmitter<'a> {
     pub fn new(
         package: impl Into<String>,
         jxt_package: impl Into<String>,
-        jextract_class_name: impl Into<String>,
+        jxt_class_name: impl Into<String>,
         proxy_class_name: impl Into<String>,
         proxy_settings: &ProxySettings,
         jr: &'a JavaRepr,
@@ -45,7 +45,7 @@ impl<'a> ProxyEmitter<'a> {
         Self {
             package: package.into(),
             jxt_package: jxt_package.into(),
-            jextract_class_name: jextract_class_name.into(),
+            jxt_class_name: jxt_class_name.into(),
             proxy_class_name: proxy_class_name.into(),
             proxy_settings: *proxy_settings,
             jr,
@@ -71,7 +71,7 @@ impl<'a> ProxyEmitter<'a> {
         ProxyTemplate {
             package: self.package.clone(),
             jxt_package: self.jxt_package.clone(),
-            jextract_class_name: self.jextract_class_name.clone(),
+            jxt_class_name: self.jxt_class_name.clone(),
             proxy_class_name: self.proxy_class_name.clone(),
             deferred_fns,
             direct_fns,
@@ -161,7 +161,7 @@ impl<'a> ProxyEmitter<'a> {
 
         let call = format!(
             "{}.{}({})",
-            self.jextract_class_name, &function.name, call_params
+            self.jxt_class_name, &function.name, call_params
         );
 
         let mut w = Writer::new();
